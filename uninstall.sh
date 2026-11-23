@@ -60,5 +60,6 @@ else:
 PY
 fi
 
-rm -rf -- "$INSTALL_DIR" "$CONFIG_DIR"
+rm -f -- "$INSTALL_DIR/server.mjs" "$ENV_FILE"
+rmdir -- "$INSTALL_DIR" "$CONFIG_DIR" 2>/dev/null || true
 printf 'Uninstalled the Magpie bridge. Magpie account data was not changed.\n'

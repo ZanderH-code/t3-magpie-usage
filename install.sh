@@ -29,6 +29,10 @@ SERVICE_DIR="${HOME}/.config/systemd/user"
 SERVICE_FILE="${SERVICE_DIR}/t3-magpie-usage.service"
 ENV_FILE="${CONFIG_DIR}/config.env"
 PORT="${PORT:-38765}"
+if [[ ! "$PORT" =~ ^[0-9]+$ ]] || (( PORT < 1024 || PORT > 65535 )); then
+  echo "PORT must be an integer from 1024 to 65535." >&2
+  exit 1
+fi
 
 if [[ ! -f "$T3_SETTINGS" ]]; then
   echo "T3 settings not found at $T3_SETTINGS. Start T3 Code once, or set T3_SETTINGS." >&2
@@ -36,6 +40,27 @@ if [[ ! -f "$T3_SETTINGS" ]]; then
 fi
 
 MAGPIE_URL="${MAGPIE_URL%/}"
+if [[ "$MAGPIE_URL" == *$'\n'* || "$MAGPIE_URL" == *$'\r'* ]] || ! "$NODE_BIN" --input-type=module -e 'try { const u = new URL(process.argv[1]); process.exit(u.protocol === "http:" || u.protocol === "https:" ? 0 : 1); } catch { process.exit(1); }' "$MAGPIE_URL"; then
+  echo "MAGPIE_URL must be a valid http(s) URL without line breaks." >&2
+  exit 1
+fi
+if ! "$PYTHON_BIN" -I - "$T3_SETTINGS" "$PORT" <<'PY'
+import json
+import sys
+from pathlib import Path
+path = Path(sys.argv[1]).expanduser()
+data = json.loads(path.read_text(encoding="utf-8"))
+sources = data.get("usageLimitSources", {})
+port = sys.argv[2]
+expected = {"magpieRelay": f"http://127.0.0.1:{port}"}
+for source_id, url in expected.items():
+    current = sources.get(source_id)
+    if current and current.get("url") != url:
+        raise SystemExit(f"Refusing to replace existing T3 source '{source_id}' ({current.get('url')}). Rename or remove that entry first.")
+PY
+then
+  exit 1
+fi
 if ! curl --fail --silent --show-error --max-time 8 -H 'Authorization: Bearer local' "${MAGPIE_URL}/v1/magpie/accounts" >/dev/null; then
   echo "Cannot reach Magpie accounts API at ${MAGPIE_URL}/v1/magpie/accounts." >&2
   exit 1
@@ -54,13 +79,11 @@ mv "$INSTALL_DIR/server.mjs.new" "$INSTALL_DIR/server.mjs"
 if [[ -f "$ENV_FILE" ]]; then
   MANAGEMENT_KEY="$(awk -F= '$1 == "MANAGEMENT_KEY" {print substr($0, index($0, "=") + 1); exit}' "$ENV_FILE")"
 else
+  MANAGEMENT_KEY=""
+fi
+if [[ ! "$MANAGEMENT_KEY" =~ ^[0-9a-f]{64}$ ]]; then
   MANAGEMENT_KEY="$("$NODE_BIN" --input-type=module -e 'import {randomBytes} from "node:crypto"; console.log(randomBytes(32).toString("hex"))')"
 fi
-if [[ ! "$PORT" =~ ^[0-9]+$ ]] || (( PORT < 1024 || PORT > 65535 )); then
-  echo "PORT must be an integer from 1024 to 65535." >&2
-  exit 1
-fi
-
 umask 077
 printf 'MAGPIE_URL=%s\nPORT=%s\nMANAGEMENT_KEY=%s\n' "$MAGPIE_URL" "$PORT" "$MANAGEMENT_KEY" > "$ENV_FILE"
 chmod 600 "$ENV_FILE"
@@ -120,7 +143,8 @@ WantedBy=default.target
 EOF
 chmod 600 "$SERVICE_FILE"
 systemctl --user daemon-reload
-systemctl --user enable --now t3-magpie-usage.service
+systemctl --user enable t3-magpie-usage.service
+systemctl --user restart t3-magpie-usage.service
 
 for attempt in {1..20}; do
   if curl --fail --silent --max-time 2 "http://127.0.0.1:${PORT}/health" >/dev/null; then
