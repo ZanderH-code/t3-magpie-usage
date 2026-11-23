@@ -1,0 +1,15 @@
+{
+  "name": "t3-magpie-usage",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Read-only Magpie quota adapter for T3 Code usage limits",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "check": "node --check server.mjs && node --check test/server.test.mjs && bash -n install.sh uninstall.sh",
+    "test": "node --test"
+  },
+  "license": "MIT"
+}
